@@ -73,8 +73,7 @@
 
 (defn Variable [name] {:prototype VariableProto :value name})
 
-;let [[evaluate operation symbol diff] (methods :evaluate :operation)]
-(def OperationProto (let [evaluate (method :evaluate) operation (field :operation) symbol (field :symbol) diff (method :diff)] {
+(def OperationProto (let  [evaluate (method :evaluate) operation (field :operation) symbol (field :symbol) diff (method :diff)] {
                     :evaluate (fn [this var] (apply (operation this) (mapv (fn [operand] (evaluate operand var)) (operands this))))
                     :toString (fn [this] (str "(" (symbol this) " " (clojure.string/join " " (mapv toString (operands this))) ")"))
                     :diff (fn [this var] (diff this var))
@@ -91,16 +90,18 @@
       operation_id (fn [this id] ((operands this) id))
       operation_rest (fn [this func] (apply func (rest (operands this))))
       diff_oper (fn [this var id] (diff (operation_id this id) var))
+      diff_rest (fn [this var func] (if (== (count (operands this)) 2) (diff_oper this var 1) (diff (apply func (rest (operands this))) var)))
       ]
   (def Add (OperationFactory + '+ (fn [this var] (apply Add (diff_impl this var)))))
   (def Subtract (OperationFactory - '- (fn [this var] (apply Subtract (diff_impl this var)))))
-  (def Multiply (OperationFactory * '* (fn [this var] (Add (Multiply  (operation_id this 0) (diff_oper this var 1))
+  (def Multiply (OperationFactory * '* (fn [this var] (Add (Multiply  (operation_id this 0) (diff_rest this var Multiply))
                                                            (Multiply (operation_rest this Multiply) (diff_oper this var 0))))))
   (def Negate (OperationFactory - 'negate (fn [this var] (apply Negate (diff_impl this var)))))
   (def Divide (OperationFactory (fn [a & b] (/ (double a)  (apply * b))) '/
-                                (fn [this var] (Divide(Subtract (Multiply (operation_id this 1) (diff_oper this var 0))
-                                                           (Multiply (operation_id this 0) (diff_oper this var 1)))
-                                                      (Multiply (operation_id this 1) (operation_id this 1))))))
+                                (fn [this var] (Divide(Subtract (Multiply (operation_rest this Multiply) (diff_oper this var 0))
+                                                           (Multiply (operation_id this 0) (diff_rest this var Multiply)))
+                                                      (Multiply (operation_rest this Multiply) (operation_rest this Multiply))))))
+
   (def Sign (OperationFactory (fn [x] (Math/signum x)) 'sign (Constant 0)))
   (def Sqrt (OperationFactory (fn [x] (Math/sqrt (Math/abs x))) 'sqrt (fn [this var] (Divide (diff_oper this var 0)
                                                            (Multiply (Constant 2) (Sqrt (operation_id this 0)) (Sign (operation_id this 0)))))))
