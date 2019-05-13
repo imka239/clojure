@@ -56,6 +56,7 @@
     (fn [& args] {:prototype oper
                   :operands  (vec args)})))
 
+
 (def Add (OperationFactory + '+ (fn [_ _ da db] (Add da db))))
 (def Subtract (OperationFactory - '- (fn [_ _ da db] (Subtract da db))))
 (def Multiply (OperationFactory * '* (fn [a b da db] (Add (Multiply a db) (Multiply b da)))))
