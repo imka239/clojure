@@ -15,10 +15,10 @@
 (def toString (method :toString))
 (def evaluate (method :evaluate))
 (def diff (method :diff))
+(def diffF (field :diffF))
 (def operands (field :operands))
 (def symbol (field :symbol))
 (def operation (field :operation))
-(def diffF (field :diffF))
 
 (def ConstProto (let [number (field :value)] {
                                               :toString (fn [this] (format "%.1f" (number this)))
@@ -33,31 +33,39 @@
                          one (Constant 1)] {
                                             :evaluate (fn [this vars] (vars (name this)))
                                             :toString (fn [this] (name this))
-                                            :diff     (fn [this var] (if (= var (name this)) one zero))}))
+                                            :diff     (fn [this var] (if (= var (name this)) one zero))
+                                            }))
 
 (defn Variable [name] {:prototype VariableProto :value name})
 
-(def OperationPrototype {
-                         :toString (fn [this] (str "(" (symbol this) (clojure.string/join " " (map toString (operands this))) ")"))
-                         :evaluate (fn [this vars] (apply (operation this) (map (fn [x] (evaluate x vars)) (operands this))))
-                         :diff (fn [this var] ((diffF this) (operands this) var))
-                         })
+(def OperationProto
+  {:evaluate (fn [this var] (apply (operation this) (mapv (fn [operand] (evaluate operand var)) (operands this))))
+   :toString (fn [this] (str "(" (symbol this) " " (clojure.string/join " " (mapv toString (operands this))) ")"))
+   :diff     (fn [this key] ((diffF this) (operands this) (mapv (fn [x] (diff x key)) (operands this)) key))})
 
-(defn OperationFactory [oper, sym, dif]
-  (fn [& args] (
-                 :operation oper
-                 :symbol sym
-                 :diffF dif
-                 :operands (apply vector args))))
+(defn OperationFactory [action symbol diff]
+  (let [proto {:prototype OperationProto
+               :operation action
+               :diffF     diff
+               :symbol    symbol}]
+    (fn [& args] {:prototype proto
+                  :operands  (vec args)})))
 
-
-(def Add (OperationFactory + '+ (fn [_ _ da db] (Add da db))))
-(def Subtract (OperationFactory - '- (fn [_ _ da db] (Subtract da db))))
-(def Multiply (OperationFactory * '* (fn [a b da db] (Add (Multiply a db) (Multiply b da)))))
-(def Square (OperationFactory (fn [x] (* x x)) 'square (fn [a da] (Multiply (Constant 2) da a))))
-(def Negate (OperationFactory - 'negate (fn [_ da] (Negate da))))
-(def Divide (OperationFactory (fn [a & b] (/ (double a) (apply * b))) '/ (fn [a b da db] (Divide (Subtract (Multiply da b) (Multiply a db)) (Square b)))))
-(def Sqrt (OperationFactory (fn [x] (Math/sqrt (Math/abs x))) 'sqrt (fn [a da] (Divide (Multiply a da) (Multiply (Constant 2) (Sqrt (Multiply (Square a) a)))))))
+(def Add (OperationFactory + '+ (fn [[& _] [& da] var] (apply Add da))))
+(def Subtract (OperationFactory - '- (fn [[& a] [& da] var] (apply Subtract da))))
+(def Multiply (OperationFactory * '* (fn [[fia seca & a] [fida secda & da] var] (cond
+                                                                                  (== (count a) 0) (Add (Multiply fida seca)
+                                                                                                        (Multiply secda fia))
+                                                                                  (> (count a) 0) (diff (Multiply fia (apply Multiply (rest a) (rest da))) var)))))
+(def Square (OperationFactory (fn [x] (* x x)) 'square (fn [[& a] [& da] var] (diff Multiply a da var))))
+(def Negate (OperationFactory - 'negate (fn [[_] [da] var] (Negate da))))
+(def Divide (OperationFactory (fn [a & b] (/ (double a) (apply * b))) '/ (fn [[& a] [& da] var] (cond
+                                                                                                  (== (count a) 2) (Divide (Subtract (Multiply (first da) (second a))
+                                                                                                                                     (Multiply (first a) (second da)))
+                                                                                                                           (Square (second a)))))))
+(def Sqrt (OperationFactory (fn [x] (Math/sqrt (Math/abs x))) 'sqrt (fn [[a] [da] var]
+                                                                      (Divide (Multiply (diff a da) (Sqrt a))
+                                                                              a (Constant 2)))))
 
 
 (def objectOperations
@@ -75,10 +83,7 @@
   (cond
     (seq? expr) (apply (objectOperations (first expr)) (mapv parseObj (rest expr)))
     (number? expr) (Constant expr)
-    :else (Variable (str expr))
-    ))
+    (symbol? expr) (Variable (str expr))))
 
 (def parseObject
   (comp parseObj read-string))
-
-
