@@ -41,7 +41,7 @@
 (def OperationProto
     {:evaluate (fn [this var] (apply (operation this) (mapv (fn [operand] (evaluate operand var)) (operands this))))
      :toString (fn [this] (str "(" (symbol this) " " (clojure.string/join " " (mapv toString (operands this))) ")"))
-     :diff     (fn [this key] ((diffF this) (operands this)  key))})
+     :diff     (fn [this key] ((diffF this) (operands this) (mapv (fn [x] (diff x key)) (operands this)) key))})
 
 (defn OperationFactory [action symbol diff]
   (let [proto {:prototype OperationProto
@@ -51,29 +51,29 @@
     (fn [& args] {:prototype proto
                   :operands  (vec args)})))
 
-(defn Mapv [f a var] (apply f (mapv (fn [x] (diff x var)) a)))
+;(diff (Multiply (Constant 1) (Constant 2) (Constant 3)) "y")
 
-(def Add (OperationFactory + '+ (fn [a var] (Mapv Add a var))))
-(def Subtract (OperationFactory - '- (fn [a var] (Mapv Subtract a var))))
-(def Multiply (OperationFactory * '* (fn [[fi sec & a] var]
-                                       (let [difffi (diff fi var), diffsec (diff sec var)]
-                                          (cond
-                                            (== (count a) 0) (Add (Multiply difffi sec)
-                                                                  (Multiply diffsec fi))
-                                            (> (count a) 0) (diff (Multiply fi (apply Multiply [sec a])) var))))))
-(def Square (OperationFactory (fn [x] (* x x)) 'square (fn [[fi] var] (diff (Multiply fi fi) var))))
-(def Negate (OperationFactory - 'negate (fn [a var] (Negate (Mapv Add a var)))))
-(def Divide (OperationFactory (fn [a & b] (/ (double a) (apply * b))) '/ (fn [[fi sec & a] var]
-                                                             (let [difffi (diff fi var), diffsec (diff sec var)]
-                                                              (cond
-                                                                (== (count a) 0) (Divide (Subtract (Multiply difffi sec)
-                                                                                                   (Multiply fi diffsec))
-                                                                                         (Square sec))
-                                                                (> (count a) 0) (diff (Divide fi (apply Multiply [sec a])) var))))))
-(def Sqrt (OperationFactory (fn [x] (Math/sqrt (Math/abs x))) 'sqrt (fn [[fi] var]
-                                                                      (let [diffi (diff fi var)]
-                                                                        (Divide (Multiply diffi (Sqrt fi))
-                                                                                fi (Constant 2))))))
+
+(def Add (OperationFactory + '+ (fn [_ da _] (apply Add da))))
+(def Subtract (OperationFactory - '- (fn [_ da _] (apply Subtract da))))
+(def Multiply (OperationFactory * '* (fn [[fi sec & a] [difffi, diffsec & _] var]
+                                   (cond
+                                     (empty? a) (Add (Multiply difffi sec)
+                                                           (Multiply diffsec fi))
+                                     (not (empty? a)) (diff (Multiply fi (apply Multiply (vector sec a))) var)))))
+(def Square (OperationFactory (fn [x] (* x x)) 'square (fn [[fi] [_] var] (diff (Multiply fi fi) var))))
+(def Negate (OperationFactory - 'negate (fn [_ da _] (apply Negate da))))
+(def Divide (OperationFactory (fn [a & b] (/ (double a) (apply * b))) '/
+                              (fn [[fi sec & a] [difffi, diffsec, & _] var]
+                                 (cond
+                                   (empty? a) (Divide (Subtract (Multiply difffi sec)
+                                                                      (Multiply fi diffsec))
+                                                            (Square sec))
+                                   (not (empty? a)) (diff (Divide fi (apply Multiply (vector sec a))) var)))))
+(def Sqrt (OperationFactory (fn [x] (Math/sqrt (Math/abs x))) 'sqrt
+                            (fn [[fi] [difffi] _]
+                                  (Divide (Multiply difffi (Sqrt fi))
+                                          fi (Constant 2)))))
 
 
 (def objectOperations
